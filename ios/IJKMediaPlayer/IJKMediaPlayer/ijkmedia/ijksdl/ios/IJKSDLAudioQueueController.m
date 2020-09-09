@@ -36,6 +36,7 @@
     AudioQueueBufferRef _audioQueueBufferRefArray[kIJKAudioQueueNumberBuffers];
     BOOL _isPaused;
     BOOL _isStopped;
+    BOOL _isMute;
 
     volatile BOOL _isAborted;
     NSLock *_lock;
@@ -120,6 +121,7 @@
          */
 
         _isStopped = NO;
+        _isMute = NO;
 
         _lock = [[NSLock alloc] init];
     }
@@ -188,6 +190,20 @@
             AudioQueueFlush(_audioQueueRef);
         }
     }
+}
+
+- (void)setMute:(BOOL)mute
+{
+    _isMute = mute;
+    if (mute) {
+        AudioQueueSetParameter(_audioQueueRef, kAudioQueueParam_Volume, 0);
+    } else {
+        AudioQueueSetParameter(_audioQueueRef, kAudioQueueParam_Volume, 1);
+    }
+}
+
+- (BOOL)mute {
+    return _isMute;
 }
 
 - (void)stop

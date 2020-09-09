@@ -376,6 +376,51 @@ int ijkmp_set_data_source(IjkMediaPlayer *mp, const char *url)
     return retval;
 }
 
+int64_t ijkmp_get_buffer_tell(IjkMediaPlayer *mp)
+{
+    assert(mp);
+    pthread_mutex_lock(&mp->mutex);
+    int64_t tell = ffp_get_buffer_tell(mp->ffplayer);
+    pthread_mutex_unlock(&mp->mutex);
+    return tell < 0 ? 0 : tell;
+}
+
+void ijkmp_set_mute(IjkMediaPlayer *mp, int mute)
+{
+    assert(mp);
+    pthread_mutex_lock(&mp->mutex);
+    SDL_AoutMuteAudio(mp->ffplayer->aout, mute);
+    pthread_mutex_unlock(&mp->mutex);
+}
+
+
+int ijkmp_get_mute(IjkMediaPlayer *mp)
+{
+    assert(mp);
+    pthread_mutex_lock(&mp->mutex);
+    int is_mute = SDL_AoutGetMute(mp->ffplayer->aout);
+    pthread_mutex_unlock(&mp->mutex);
+    return is_mute;
+}
+
+int ijkmp_getVideoWidth(IjkMediaPlayer *mp)
+{
+    assert(mp);
+    assert(mp->ffplayer);
+    assert(mp->ffplayer->is);
+    
+    return mp->ffplayer->is->width;
+}
+
+int ijkmp_getVideoHeight(IjkMediaPlayer *mp)
+{
+    assert(mp);
+    assert(mp->ffplayer);
+    assert(mp->ffplayer->is);
+    
+    return mp->ffplayer->is->height;
+}
+
 static int ijkmp_msg_loop(void *arg)
 {
     IjkMediaPlayer *mp = arg;
@@ -545,6 +590,24 @@ int ijkmp_stop(IjkMediaPlayer *mp)
     pthread_mutex_unlock(&mp->mutex);
     MPTRACE("ijkmp_stop()=%d\n", retval);
     return retval;
+}
+
+int ijkmp_dropped_frame(IjkMediaPlayer *mp) {
+    assert(mp);
+    if (mp->ffplayer->is) {
+        return mp->ffplayer->is->frame_drops_early + mp->ffplayer->is->frame_drops_late;
+    }
+  
+    return 0;
+}
+
+int ijkmp_displayed_frame(IjkMediaPlayer *mp) {
+    assert(mp);
+  
+    if (mp->ffplayer->is) {
+        return mp->ffplayer->is->frame_display;
+    }
+    return 0;
 }
 
 bool ijkmp_is_playing(IjkMediaPlayer *mp)
@@ -795,4 +858,16 @@ int ijkmp_get_msg(IjkMediaPlayer *mp, AVMessage *msg, int block)
     }
 
     return -1;
+}
+
+void ijkmp_setupEffect(IjkMediaPlayer *mp, void *cbOnCreated, void *cbOnSizeChanged, void *cbOnDrawFrame) {
+    assert(mp);
+    
+    av_log(NULL, AV_LOG_DEBUG,"ijkmp_setupEffect\n");
+    if (mp->ffplayer) {
+        mp->ffplayer->vout->activeEffect = 0;
+        mp->ffplayer->vout->func_onCreated = cbOnCreated;
+        mp->ffplayer->vout->func_onSizeChanged = cbOnSizeChanged;
+        mp->ffplayer->vout->func_onDrawFrame = cbOnDrawFrame;
+    }
 }

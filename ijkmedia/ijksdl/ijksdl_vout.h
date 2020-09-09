@@ -31,6 +31,8 @@
 #include "ijksdl_video.h"
 #include "ffmpeg/ijksdl_inc_ffmpeg.h"
 
+#include <CoreVideo/CoreVideo.h>
+
 typedef struct SDL_VoutOverlay_Opaque SDL_VoutOverlay_Opaque;
 typedef struct SDL_VoutOverlay SDL_VoutOverlay;
 struct SDL_VoutOverlay {
@@ -48,6 +50,11 @@ struct SDL_VoutOverlay {
 
     SDL_Class               *opaque_class;
     SDL_VoutOverlay_Opaque  *opaque;
+    
+    int activeMatting;
+    void (*func_onCreated)(void);
+    void (*func_onSizeChanged)(int width, int height);
+    void (*func_onDrawFrame)(CVPixelBufferRef cvBuffer);
 
     void    (*free_l)(SDL_VoutOverlay *overlay);
     int     (*lock)(SDL_VoutOverlay *overlay);
@@ -69,6 +76,11 @@ struct SDL_Vout {
     int (*display_overlay)(SDL_Vout *vout, SDL_VoutOverlay *overlay);
 
     Uint32 overlay_format;
+    
+    int activeEffect;
+    void (*func_onCreated)(void);
+    void (*func_onSizeChanged)(int width, int height);
+    void (*func_onDrawFrame)(CVPixelBufferRef cvBuffer);
 };
 
 void SDL_VoutFree(SDL_Vout *vout);

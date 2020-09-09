@@ -53,6 +53,25 @@ typedef NS_ENUM(NSInteger, IJKMPMovieFinishReason) {
     IJKMPMovieFinishReasonUserExited
 };
 
+typedef NS_ENUM(NSInteger, IJKMPMovieErrorState) {
+    IJKMPMovieErrorStart = 50000,
+    IJKMPMovieErrorUnknown,
+    IJKMPMovieErrorTimeout,
+    IJKMPMovieErrorIO,
+    IJKMPMovieErrorInvalidData,
+    IJKMPMovieErrorAdec,
+    IJKMPMovieErrorVdec,
+    IJKMPMovieErrorExit,
+    IJKMPMovieErrorRestrictedUrl,
+    IJKMPMovieErrorRestrictedTimeArrival,
+    IJKMPMovieErrorHttpBadRequest,
+    IJKMPMovieErrorHttpUnauthorized,
+    IJKMPMovieErrorHttpForbidden,
+    IJKMPMovieErrorHttpNotFound,
+    IJKMPMovieErrorHttpOther4xx,
+    IJKMPMovieErrorHttpServerError
+};
+
 // -----------------------------------------------------------------------------
 // Thumbnails
 
@@ -165,6 +184,8 @@ IJK_EXTERN NSString *const IJKMPMoviePlayerAccurateSeekCompleteNotification;
 IJK_EXTERN NSString *const IJKMPMoviePlayerSeekAudioStartNotification;
 IJK_EXTERN NSString *const IJKMPMoviePlayerSeekVideoStartNotification;
 
+IJK_EXTERN NSString *const IJKMPMoviePlayerErrorNotification;
+
 @end
 
 #pragma mark IJKMediaUrlOpenDelegate
@@ -223,5 +244,15 @@ typedef NS_ENUM(NSInteger, IJKMediaEvent) {
 @protocol IJKMediaNativeInvokeDelegate <NSObject>
 
 - (int)invoke:(IJKMediaEvent)event attributes:(NSDictionary *)attributes;
+
+@end
+
+@protocol IJKMediaGLRenderDelegate <NSObject>
+
+- (void)onCreate;
+
+- (void)onSizeChanged:(int)width height:(int)height;
+
+- (void)onDrawFrame:(CVPixelBufferRef)cvBuffer;
 
 @end

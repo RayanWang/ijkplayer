@@ -36,6 +36,8 @@
 
 static const char *kIJKFFRequiredFFmpegVersion = "ff3.4--ijk0.8.7--20180103--001";
 
+static IJKFFMoviePlayerController *instance = nil;
+
 // It means you didn't call shutdown if you found this object leaked.
 @interface IJKWeakHolder : NSObject
 @property (nonatomic, weak) id object;
@@ -74,6 +76,8 @@ static const char *kIJKFFRequiredFFmpegVersion = "ff3.4--ijk0.8.7--20180103--001
     IjkIOAppCacheStatistic _cacheStat;
     NSTimer *_hudTimer;
     IJKSDLHudViewController *_hudViewController;
+    
+    pthread_mutex_t _lock;
 }
 
 @synthesize view = _view;
@@ -170,6 +174,96 @@ void IJKFFIOStatCompleteRegister(void (*cb)(const char *url,
 {
     [IJKMediaModule sharedModule].mediaModuleIdleTimerDisabled = on;
     // [UIApplication sharedApplication].idleTimerDisabled = on;
+}
+
+- (id)initWithOptions:(IJKFFOptions *)options {
+    self = [super init];
+    if (self) {
+        instance = self;
+        
+        pthread_mutex_init(&_lock, NULL);
+        
+        _nonAccumulated_rebufferTime = 0;
+        _meanSingleRebufferTime = 0;
+        _nonAccumulated_less_1s_count = 0;
+        _nonAccumulated_less_3s_count = 0;
+        _nonAccumulated_more_3s_count = 0;
+        
+        ijkmp_global_init();
+        ijkmp_global_set_inject_callback(ijkff_inject_callback);
+
+        [IJKFFMoviePlayerController checkIfFFmpegVersionMatch:NO];
+
+        if (options == nil)
+            options = [IJKFFOptions optionsByDefault];
+
+        // IJKFFIOStatRegister(IJKFFIOStatDebugCallback);
+        // IJKFFIOStatCompleteRegister(IJKFFIOStatCompleteDebugCallback);
+
+        // init fields
+        _scalingMode = IJKMPMovieScalingModeAspectFit;
+        _shouldAutoplay = YES;
+        memset(&_asyncStat, 0, sizeof(_asyncStat));
+        memset(&_cacheStat, 0, sizeof(_cacheStat));
+        _monitor = [[IJKFFMonitor alloc] init];
+
+        // init player
+        _mediaPlayer = ijkmp_ios_create(media_player_msg_loop);
+        _msgPool = [[IJKFFMoviePlayerMessagePool alloc] init];
+        IJKWeakHolder *weakHolder = [IJKWeakHolder new];
+        weakHolder.object = self;
+
+        ijkmp_set_weak_thiz(_mediaPlayer, (__bridge_retained void *) self);
+        ijkmp_set_inject_opaque(_mediaPlayer, (__bridge_retained void *) weakHolder);
+        ijkmp_set_ijkio_inject_opaque(_mediaPlayer, (__bridge_retained void *)weakHolder);
+        ijkmp_set_option_int(_mediaPlayer, IJKMP_OPT_CATEGORY_PLAYER, "start-on-prepared", _shouldAutoplay ? 1 : 0);
+
+        // init video sink
+        _glView = [[IJKSDLGLView alloc] initWithFrame:[[UIScreen mainScreen] bounds]];
+        _glView.isThirdGLView = NO;
+        _view = _glView;
+        _hudViewController = [[IJKSDLHudViewController alloc] init];
+        [_hudViewController setRect:_glView.frame];
+        _shouldShowHudView = NO;
+        _hudViewController.tableView.hidden = YES;
+        [_view addSubview:_hudViewController.tableView];
+
+        [self setHudValue:nil forKey:@"scheme"];
+        [self setHudValue:nil forKey:@"host"];
+        [self setHudValue:nil forKey:@"path"];
+        [self setHudValue:nil forKey:@"ip"];
+        [self setHudValue:nil forKey:@"tcp-info"];
+        [self setHudValue:nil forKey:@"http"];
+        [self setHudValue:nil forKey:@"tcp-spd"];
+        [self setHudValue:nil forKey:@"t-prepared"];
+        [self setHudValue:nil forKey:@"t-render"];
+        [self setHudValue:nil forKey:@"t-preroll"];
+        [self setHudValue:nil forKey:@"t-http-open"];
+        [self setHudValue:nil forKey:@"t-http-seek"];
+        
+        self.shouldShowHudView = options.showHudView;
+
+        ijkmp_ios_set_glview(_mediaPlayer, _glView);
+        ijkmp_set_option(_mediaPlayer, IJKMP_OPT_CATEGORY_PLAYER, "overlay-format", "fcc-_es2");
+#ifdef DEBUG
+        [IJKFFMoviePlayerController setLogLevel:k_IJK_LOG_DEBUG];
+#else
+        [IJKFFMoviePlayerController setLogLevel:k_IJK_LOG_SILENT];
+#endif
+        // init audio sink
+        [[IJKAudioKit sharedInstance] setupAudioSession];
+
+        [options applyTo:_mediaPlayer];
+        _pauseInBackground = NO;
+
+        // init extra
+        _keepScreenOnWhilePlaying = YES;
+        [self setScreenOn:YES];
+
+        _notificationManager = [[IJKNotificationManager alloc] init];
+        [self registerApplicationObservers];
+    }
+    return self;
 }
 
 - (id)initWithContentURLString:(NSString *)aUrlString
@@ -365,7 +459,65 @@ void IJKFFIOStatCompleteRegister(void (*cb)(const char *url,
 
 - (void)dealloc
 {
+    releaseController();
 //    [self unregisterApplicationObservers];
+}
+
+- (void)setContentURL:(NSURL *)aUrl {
+    if (aUrl == nil)
+        return;
+      
+    // Detect if URL is file path and return proper string for it
+    NSString *aUrlString = [aUrl isFileURL] ? [aUrl path] : [aUrl absoluteString];
+    
+    // init media resource
+    _urlString = aUrlString;
+}
+
+- (void)setOption:(IJKFFOptions *)options {
+    if (options == nil)
+        options = [IJKFFOptions optionsByDefault];
+    
+    self.shouldShowHudView = options.showHudView;
+    
+    [options applyTo:_mediaPlayer];
+}
+
+- (void)setLoop:(BOOL)loop {
+    ijkmp_set_loop(_mediaPlayer, loop == YES ? 1000 : 1);
+}
+
+- (void)setMute:(BOOL)mute {
+     ijkmp_set_mute(_mediaPlayer, mute == YES ? 1 : 0);
+}
+
+- (int)videoWidth {
+    return ijkmp_getVideoWidth(_mediaPlayer);
+}
+
+- (int)videoHeight {
+    return ijkmp_getVideoHeight(_mediaPlayer);
+}
+
+- (float) getPropertyFloat:(int)key {
+    return ijkmp_get_property_float(_mediaPlayer, key, .0f);
+}
+
+- (int64_t) getPropertyInt64:(int)key {
+    return ijkmp_get_property_int64(_mediaPlayer, key, 0);
+}
+
+- (void)printLog:(NSString*)msg {
+    const char *msgLog = [msg UTF8String];
+    VLOGD("%s", msgLog);
+}
+
+- (int)droppedFrame {
+    return ijkmp_dropped_frame(_mediaPlayer);
+}
+
+- (int)displayedFrame {
+    return ijkmp_displayed_frame(_mediaPlayer);
 }
 
 - (void)setShouldAutoplay:(BOOL)shouldAutoplay
@@ -505,6 +657,18 @@ inline static int getPlayerOption(IJKFFOptionCategory category)
         return;
 
     ijkmp_set_option_int(_mediaPlayer, getPlayerOption(category), [key UTF8String], value);
+}
+
+- (void)ffplayerLock {
+    pthread_mutex_lock(&_lock);
+}
+
+- (void)ffplayerUnlock {
+    pthread_mutex_unlock(&_lock);
+}
+
+- (double)meanSingleRebufferTime {
+    return _nonAccumulated_rebufferCount == 0 ? 0 : _nonAccumulated_rebufferTime / _nonAccumulated_rebufferCount;
 }
 
 + (void)setLogReport:(BOOL)preferLogReport
@@ -1030,12 +1194,64 @@ inline static void fillMetaInternal(NSMutableDictionary *meta, IjkMediaMeta *raw
             [[NSNotificationCenter defaultCenter]
              postNotificationName:IJKMPMoviePlayerPlaybackStateDidChangeNotification
              object:self];
+            
+            NSInteger errorCode = IJKMPMovieErrorUnknown;
+            switch (avmsg->arg1) {
+                case FFP_ERROR_UNKNOWN:
+                     errorCode = IJKMPMovieErrorUnknown;
+                     break;
+                case FFP_ERROR_TIMEOUT:
+                     errorCode = IJKMPMovieErrorTimeout;
+                     break;
+                case FFP_ERROR_IO:
+                     errorCode = IJKMPMovieErrorIO;
+                     break;
+                case FFP_ERROR_INVALID_DATA:
+                     errorCode = IJKMPMovieErrorInvalidData;
+                     break;
+                case FFP_ERROR_ADEC:
+                     errorCode = IJKMPMovieErrorAdec;
+                     break;
+                case FFP_ERROR_VDEC:
+                     errorCode = IJKMPMovieErrorVdec;
+                     break;
+                case FFP_ERROR_EXIT:
+                     errorCode = IJKMPMovieErrorExit;
+                     break;
+                case FFP_ERROR_RESTRICTED_URL:
+                     errorCode = FFP_ERROR_RESTRICTED_URL;
+                     break;
+                case FFP_ERROR_RESTRICTED_TIME_ARRIVAL:
+                     errorCode = IJKMPMovieErrorRestrictedTimeArrival;
+                     break;
+                case FFP_ERROR_HTTP_BAD_REQUEST:
+                     errorCode = IJKMPMovieErrorHttpBadRequest;
+                     break;
+                case FFP_ERROR_HTTP_UNAUTHORIZED:
+                     errorCode = IJKMPMovieErrorHttpUnauthorized;
+                     break;
+                case FFP_ERROR_HTTP_FORBIDDEN:
+                     errorCode = IJKMPMovieErrorHttpForbidden;
+                     break;
+                case FFP_ERROR_HTTP_NOT_FOUND:
+                     errorCode = IJKMPMovieErrorHttpNotFound;
+                     break;
+                case FFP_ERROR_HTTP_OTHER_4XX:
+                     errorCode = IJKMPMovieErrorHttpOther4xx;
+                     break;
+                case FFP_ERROR_HTTP_SERVER_ERROR:
+                     errorCode = IJKMPMovieErrorHttpServerError;
+                     break;
+                default:
+                     errorCode = IJKMPMovieErrorUnknown;
+                     break;
+            }
 
             [[NSNotificationCenter defaultCenter]
-                postNotificationName:IJKMPMoviePlayerPlaybackDidFinishNotification
+                postNotificationName:IJKMPMoviePlayerErrorNotification
                 object:self
                 userInfo:@{
-                    IJKMPMoviePlayerPlaybackDidFinishReasonUserInfoKey: @(IJKMPMovieFinishReasonPlaybackError),
+                    IJKMPMoviePlayerErrorNotification: @(errorCode),
                     @"error": @(avmsg->arg1)}];
             break;
         }
@@ -1182,6 +1398,10 @@ inline static void fillMetaInternal(NSMutableDictionary *meta, IjkMediaMeta *raw
 
             _monitor.lastPrerollStartTick = (int64_t)SDL_GetTickHR();
 
+            pthread_mutex_lock(&_lock);
+            ++_nonAccumulated_rebufferCount;
+            pthread_mutex_unlock(&_lock);
+
             _loadState = IJKMPMovieLoadStateStalled;
             _isSeekBuffering = avmsg->arg1;
 
@@ -1195,6 +1415,16 @@ inline static void fillMetaInternal(NSMutableDictionary *meta, IjkMediaMeta *raw
             NSLog(@"FFP_MSG_BUFFERING_END:\n");
 
             _monitor.lastPrerollDuration = (int64_t)SDL_GetTickHR() - _monitor.lastPrerollStartTick;
+            
+            pthread_mutex_lock(&_lock);
+            _nonAccumulated_rebufferTime += _monitor.lastPrerollDuration;
+            if (_monitor.lastPrerollDuration <= 1000)
+                ++_nonAccumulated_less_1s_count;
+            else if (_monitor.lastPrerollDuration <= 3000)
+                ++_nonAccumulated_less_3s_count;
+            else
+                ++_nonAccumulated_more_3s_count;
+            pthread_mutex_unlock(&_lock);
 
             _loadState = IJKMPMovieLoadStatePlayable | IJKMPMovieLoadStatePlaythroughOK;
             _isSeekBuffering = avmsg->arg1;
@@ -1331,6 +1561,13 @@ inline static void fillMetaInternal(NSMutableDictionary *meta, IjkMediaMeta *raw
     return [_msgPool obtain];
 }
 
+- (int64_t)numberOfBytesTransferred {
+    if (!_mediaPlayer) {
+        return 0;
+    }
+    return ijkmp_get_buffer_tell(_mediaPlayer);
+}
+
 inline static IJKFFMoviePlayerController *ffplayerRetain(void *arg) {
     return (__bridge_transfer IJKFFMoviePlayerController *) arg;
 }
@@ -1456,6 +1693,12 @@ static int onInectIJKIOStatistic(IJKFFMoviePlayerController *mpc, int type, void
     assert(sizeof(IjkIOAppCacheStatistic) == data_size);
 
     mpc->_cacheStat = *realData;
+    return 0;
+}
+
+static int onInjectGLRender(IJKFFMoviePlayerController *mpc, id<IJKMediaGLRenderDelegate> delegate) {
+    // TODO: Refactor the callback machenisim
+    instance.glRenderDelegate = delegate;
     return 0;
 }
 
@@ -1681,6 +1924,38 @@ static int ijkff_inject_callback(void *opaque, int message, void *data, size_t d
 - (void)setMaxBufferSize:(int)maxBufferSize
 {
     [self setPlayerOptionIntValue:maxBufferSize forKey:@"max-buffer-size"];
+}
+
+- (EAGLContext*)getEAGLContext {
+    return [_glView getEAGLContext];
+}
+
+- (void)setupEffect {
+    ijkmp_setupEffect(_mediaPlayer, &onCreated, &onSizeChanged, &onDrawFrame);
+}
+
+- (void)enableEffect:(bool)enabled {
+    [_glView enableEffect:enabled];
+}
+
+- (void)drawEffect:(GLint)textureId {
+    [_glView drawEffect:textureId];
+}
+
+void releaseController() {
+    instance = nil;
+}
+
+void onCreated() {
+    [instance.glRenderDelegate onCreate];
+}
+
+void onSizeChanged(int width, int height) {
+    [instance.glRenderDelegate onSizeChanged:width height:height];
+}
+
+void onDrawFrame(CVPixelBufferRef cvBuffer) {
+    [instance.glRenderDelegate onDrawFrame:cvBuffer];
 }
 
 #pragma mark app state changed

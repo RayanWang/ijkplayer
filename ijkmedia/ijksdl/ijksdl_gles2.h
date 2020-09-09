@@ -57,7 +57,7 @@ GLuint IJK_GLES2_loadShader(GLenum shader_type, const char *shader_source);
 #define IJK_GLES2_MAX_PLANE 3
 typedef struct IJK_GLES2_Renderer IJK_GLES2_Renderer;
 
-IJK_GLES2_Renderer *IJK_GLES2_Renderer_create(SDL_VoutOverlay *overlay);
+IJK_GLES2_Renderer *IJK_GLES2_Renderer_create(SDL_VoutOverlay *overlay, void* context);
 void      IJK_GLES2_Renderer_reset(IJK_GLES2_Renderer *renderer);
 void      IJK_GLES2_Renderer_free(IJK_GLES2_Renderer *renderer);
 void      IJK_GLES2_Renderer_freeP(IJK_GLES2_Renderer **renderer);
@@ -72,5 +72,11 @@ GLboolean IJK_GLES2_Renderer_renderOverlay(IJK_GLES2_Renderer *renderer, SDL_Vou
 #define IJK_GLES2_GRAVITY_RESIZE_ASPECT         (1) // Preserve aspect ratio; fit within view bounds.
 #define IJK_GLES2_GRAVITY_RESIZE_ASPECT_FILL    (2) // Preserve aspect ratio; fill view bounds.
 GLboolean IJK_GLES2_Renderer_setGravity(IJK_GLES2_Renderer *renderer, int gravity, GLsizei view_width, GLsizei view_height);
+
+void      IJK_GLES2_Renderer_enableMatting(IJK_GLES2_Renderer *renderer, int enabled);
+
+void      IJK_GLES2_Renderer_drawEffect(IJK_GLES2_Renderer *renderer, GLuint textureId);
+
+void      IJK_GLES2_Renderer_activeEffect(bool active);
 
 #endif

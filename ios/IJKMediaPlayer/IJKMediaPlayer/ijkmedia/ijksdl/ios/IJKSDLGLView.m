@@ -296,7 +296,7 @@ typedef NS_ENUM(NSInteger, IJKSDLGLViewApplicationState) {
         IJK_GLES2_Renderer_reset(_renderer);
         IJK_GLES2_Renderer_freeP(&_renderer);
 
-        _renderer = IJK_GLES2_Renderer_create(overlay);
+        _renderer = IJK_GLES2_Renderer_create(overlay, (__bridge void*)_context);
         if (!IJK_GLES2_Renderer_isValid(_renderer))
             return NO;
 
@@ -635,4 +635,18 @@ typedef NS_ENUM(NSInteger, IJKSDLGLViewApplicationState) {
 {
     _shouldLockWhileBeingMovedToWindow = shouldLockWhileBeingMovedToWindow;
 }
+
+- (EAGLContext*)getEAGLContext {
+    return _context;
+}
+
+- (void)drawEffect:(GLuint)textureId {
+    glBindFramebuffer(GL_FRAMEBUFFER, _framebuffer);
+    IJK_GLES2_Renderer_drawEffect(_renderer, textureId);
+}
+
+- (void)enableEffect:(bool)enable {
+    IJK_GLES2_Renderer_activeEffect(enable);
+}
+
 @end

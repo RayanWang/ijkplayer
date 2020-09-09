@@ -57,6 +57,28 @@
 
 #define kk_IJKM_KEY_STREAMS       @"streams"
 
+#define k_FFP_PROP_FLOAT_VIDEO_DECODE_FRAMES_PER_SECOND   10001
+#define k_FFP_PROP_FLOAT_VIDEO_OUTPUT_FRAMES_PER_SECOND   10002
+#define k_FFP_PROP_FLOAT_PLAYBACK_RATE                    10003
+#define k_FFP_PROP_FLOAT_AVDELAY                          10004
+#define k_FFP_PROP_FLOAT_AVDIFF                           10005
+
+#define k_FFP_PROP_INT64_SELECTED_VIDEO_STREAM            20001
+#define k_FFP_PROP_INT64_SELECTED_AUDIO_STREAM            20002
+#define k_FFP_PROP_INT64_VIDEO_DECODER                    20003
+#define k_FFP_PROP_INT64_AUDIO_DECODER                    20004
+#define     k_FFP_PROPV_DECODER_UNKNOWN                   0
+#define     k_FFP_PROPV_DECODER_AVCODEC                   1
+#define     k_FFP_PROPV_DECODER_MEDIACODEC                2
+#define     k_FFP_PROPV_DECODER_VIDEOTOOLBOX              3
+#define k_FFP_PROP_INT64_VIDEO_CACHED_DURATION            20005
+#define k_FFP_PROP_INT64_AUDIO_CACHED_DURATION            20006
+#define k_FFP_PROP_INT64_VIDEO_CACHED_BYTES               20007
+#define k_FFP_PROP_INT64_AUDIO_CACHED_BYTES               20008
+#define k_FFP_PROP_INT64_VIDEO_CACHED_PACKETS             20009
+#define k_FFP_PROP_INT64_AUDIO_CACHED_PACKETS             20010
+#define k_FFP_PROP_INT64_DOWNLOAD_BIT_RATE                30000
+
 typedef enum IJKLogLevel {
     k_IJK_LOG_UNKNOWN = 0,
     k_IJK_LOG_DEFAULT = 1,
@@ -72,6 +94,8 @@ typedef enum IJKLogLevel {
 
 @interface IJKFFMoviePlayerController : NSObject <IJKMediaPlayback>
 
+- (id)initWithOptions:(IJKFFOptions *)options;
+
 - (id)initWithContentURL:(NSURL *)aUrl
              withOptions:(IJKFFOptions *)options;
 
@@ -85,6 +109,16 @@ typedef enum IJKLogLevel {
 - (id)initWithMoreContentString:(NSString *)aUrlString
                  withOptions:(IJKFFOptions *)options
                   withGLView:(UIView<IJKSDLGLViewProtocol> *)glView;
+
+- (void)setContentURL:(NSURL *)aUrl;
+- (void)setOption:(IJKFFOptions *)options;
+- (void)setLoop:(BOOL)loop;
+- (void)setMute:(BOOL)mute;
+- (int)videoWidth;
+- (int)videoHeight;
+- (float)getPropertyFloat:(int)key;
+- (int64_t)getPropertyInt64:(int)key;
+- (void)printLog:(NSString*)msg;
 
 - (void)prepareToPlay;
 - (void)play;
@@ -108,6 +142,18 @@ typedef enum IJKLogLevel {
 @property(nonatomic, readonly) CGFloat fpsInMeta;
 @property(nonatomic, readonly) CGFloat fpsAtOutput;
 @property(nonatomic) BOOL shouldShowHudView;
+@property(nonatomic, readonly) BOOL     isVideoOnly;
+@property(nonatomic, readonly) BOOL     isAudioOnly;
+@property(nonatomic, readonly) int      droppedFrame;
+@property(nonatomic, readonly) int      displayedFrame;
+
+///<below is the playback info for reporting to backend in each fixed time interval
+@property(nonatomic) double             nonAccumulated_rebufferTime;
+@property(nonatomic) double             meanSingleRebufferTime;
+@property(nonatomic) int                nonAccumulated_rebufferCount;
+@property(nonatomic) int                nonAccumulated_less_1s_count;   ///<卡頓時間在1秒內的次數
+@property(nonatomic) int                nonAccumulated_less_3s_count;   ///<卡頓時間在1~3秒內的次數
+@property(nonatomic) int                nonAccumulated_more_3s_count;   ///<卡頓時間在3秒以上的次數
 
 - (void)setOptionValue:(NSString *)value
                 forKey:(NSString *)key
@@ -129,10 +175,15 @@ typedef enum IJKLogLevel {
 - (void)setSwsOptionIntValue:       (int64_t)value forKey:(NSString *)key;
 - (void)setPlayerOptionIntValue:    (int64_t)value forKey:(NSString *)key;
 
+- (void)ffplayerLock;
+- (void)ffplayerUnlock;
+
 @property (nonatomic, retain) id<IJKMediaUrlOpenDelegate> segmentOpenDelegate;
 @property (nonatomic, retain) id<IJKMediaUrlOpenDelegate> tcpOpenDelegate;
 @property (nonatomic, retain) id<IJKMediaUrlOpenDelegate> httpOpenDelegate;
 @property (nonatomic, retain) id<IJKMediaUrlOpenDelegate> liveOpenDelegate;
+
+@property (nonatomic, retain) id<IJKMediaGLRenderDelegate> glRenderDelegate;
 
 @property (nonatomic, retain) id<IJKMediaNativeInvokeDelegate> nativeInvokeDelegate;
 
@@ -140,6 +191,14 @@ typedef enum IJKLogLevel {
 
 #pragma mark KVO properties
 @property (nonatomic, readonly) IJKFFMonitor *monitor;
+
+- (EAGLContext*)getEAGLContext;
+
+- (void)setupEffect;
+
+- (void)enableEffect:(bool)enabled;
+
+- (void)drawEffect:(GLint)textureId;
 
 @end
 

@@ -19,7 +19,104 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include <pthread.h>
 #include "internal.h"
+
+pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+bool activeEffect = false;
+
+GLboolean IJK_GLES2_Render_SetupTextureWithPixelBuffer(IJK_GLES2_Renderer *renderer) {
+    CFDictionaryRef empty = CFDictionaryCreate(kCFAllocatorDefault,
+                                               NULL,
+                                               NULL,
+                                               0,
+                                               &kCFTypeDictionaryKeyCallBacks,
+                                               &kCFTypeDictionaryValueCallBacks);
+    
+    CFMutableDictionaryRef attrs = CFDictionaryCreateMutable(kCFAllocatorDefault,
+                                                             1,
+                                                             &kCFTypeDictionaryKeyCallBacks,
+                                                             &kCFTypeDictionaryValueCallBacks);
+    
+    CFDictionarySetValue(attrs, kCVPixelBufferIOSurfacePropertiesKey, empty);
+    
+    CVReturn cvRet = CVPixelBufferCreate(kCFAllocatorDefault,
+                                         renderer->frame_width,
+                                         renderer->frame_height,
+                                         kCVPixelFormatType_32BGRA,
+                                         attrs,
+                                         &renderer->cvBuffer);
+    
+    if (kCVReturnSuccess != cvRet) {
+        ALOGE("[IJK_GLES2_Render_SetupTextureWithPixelBuffer] CVPixelBufferCreate error %d", cvRet);
+    }
+    
+    cvRet = CVOpenGLESTextureCacheCreateTextureFromImage(kCFAllocatorDefault,
+                                                         renderer->cvTextureCache,
+                                                         renderer->cvBuffer,
+                                                         NULL,
+                                                         GL_TEXTURE_2D,
+                                                         GL_RGBA,
+                                                         renderer->frame_width,
+                                                         renderer->frame_height,
+                                                         GL_BGRA,
+                                                         GL_UNSIGNED_BYTE,
+                                                         0,
+                                                         &renderer->cvTexture);
+    
+    CFRelease(attrs);
+    CFRelease(empty);
+    
+    if (kCVReturnSuccess != cvRet) {
+        ALOGE("[IJK_GLES2_Render_SetupTextureWithPixelBuffer] CVOpenGLESTextureCacheCreateTextureFromImage error %d", cvRet);
+        return false;
+    }
+    
+    renderer->frame_textures[0] = CVOpenGLESTextureGetName(renderer->cvTexture);
+    glBindTexture(CVOpenGLESTextureGetTarget(renderer->cvTexture), renderer->frame_textures[0]);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    
+    return true;
+}
+
+void IJK_GLES2_Renderer_InitResultTexture(IJK_GLES2_Renderer *renderer) {
+    GLenum status;
+
+    glGenFramebuffers(1, &renderer->frame_buffers[0]);
+    glBindFramebuffer(GL_FRAMEBUFFER, renderer->frame_buffers[0]);
+    
+    IJK_GLES2_Render_SetupTextureWithPixelBuffer(renderer);
+
+    glBindTexture(CVOpenGLESTextureGetTarget(renderer->cvTexture), renderer->frame_textures[0]);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, renderer->frame_textures[0], 0);
+    
+    status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+void IJK_GLES2_Renderer_ReleaseResultTexture(IJK_GLES2_Renderer *renderer) {
+    renderer->frame_textures[0] = 0;
+    
+    if (renderer->cvTexture) {
+        CFRelease(renderer->cvTexture);
+        renderer->cvTexture = nil;
+    }
+
+    if (renderer->cvBuffer) {
+        CVPixelBufferRelease(renderer->cvBuffer);
+        renderer->cvBuffer = nil;
+    }
+
+    if (renderer->frame_buffers[0]) {
+        glDeleteFramebuffers(1, &renderer->frame_buffers[0]);
+        renderer->frame_buffers[0] = 0;
+    }
+}
 
 static void IJK_GLES2_printProgramInfo(GLuint program)
 {
@@ -80,6 +177,13 @@ void IJK_GLES2_Renderer_free(IJK_GLES2_Renderer *renderer)
 {
     if (!renderer)
         return;
+    
+    IJK_GLES2_Renderer_ReleaseResultTexture(renderer);
+    
+    if (renderer->cvTextureCache) {
+        CFRelease(renderer->cvTextureCache);
+        renderer->cvTextureCache = NULL;
+    }
 
     if (renderer->func_destroy)
         renderer->func_destroy(renderer);
@@ -152,7 +256,7 @@ fail:
 }
 
 
-IJK_GLES2_Renderer *IJK_GLES2_Renderer_create(SDL_VoutOverlay *overlay)
+IJK_GLES2_Renderer *IJK_GLES2_Renderer_create(SDL_VoutOverlay *overlay, void* context)
 {
     if (!overlay)
         return NULL;
@@ -178,6 +282,15 @@ IJK_GLES2_Renderer *IJK_GLES2_Renderer_create(SDL_VoutOverlay *overlay)
             ALOGE("[GLES2] unknown format %4s(%d)\n", (char *)&overlay->format, overlay->format);
             return NULL;
     }
+    
+    renderer->frame_buffers[0] = 0;
+    CVReturn err = CVOpenGLESTextureCacheCreate(kCFAllocatorDefault, NULL, (CVEAGLContext*)context, NULL, &renderer->cvTextureCache);
+    if (err) {
+        ALOGE("[IJK_GLES2_Renderer_create] CVOpenGLESTextureCacheCreate %d", err);
+    }
+    renderer->func_onCreated = overlay->func_onCreated;
+    renderer->func_onSizeChanged = overlay->func_onSizeChanged;
+    renderer->func_onDrawFrame = overlay->func_onDrawFrame;
 
     renderer->format = overlay->format;
     return renderer;
@@ -307,16 +420,27 @@ GLboolean IJK_GLES2_Renderer_setGravity(IJK_GLES2_Renderer *renderer, int gravit
     return GL_TRUE;
 }
 
-static void IJK_GLES2_Renderer_TexCoords_reset(IJK_GLES2_Renderer *renderer)
+static void IJK_GLES2_Renderer_TexCoords_reset(IJK_GLES2_Renderer *renderer, bool flip)
 {
-    renderer->texcoords[0] = 0.0f;
-    renderer->texcoords[1] = 1.0f;
-    renderer->texcoords[2] = 1.0f;
-    renderer->texcoords[3] = 1.0f;
-    renderer->texcoords[4] = 0.0f;
-    renderer->texcoords[5] = 0.0f;
-    renderer->texcoords[6] = 1.0f;
-    renderer->texcoords[7] = 0.0f;
+    if (flip) {
+        renderer->texcoords[0] = 0.0f;
+        renderer->texcoords[1] = 0.0f;
+        renderer->texcoords[2] = 1.0f;
+        renderer->texcoords[3] = 0.0f;
+        renderer->texcoords[4] = 0.0f;
+        renderer->texcoords[5] = 1.0f;
+        renderer->texcoords[6] = 1.0f;
+        renderer->texcoords[7] = 1.0f;
+    } else {
+        renderer->texcoords[0] = 0.0f;
+        renderer->texcoords[1] = 1.0f;
+        renderer->texcoords[2] = 1.0f;
+        renderer->texcoords[3] = 1.0f;
+        renderer->texcoords[4] = 0.0f;
+        renderer->texcoords[5] = 0.0f;
+        renderer->texcoords[6] = 1.0f;
+        renderer->texcoords[7] = 0.0f;
+    }
 }
 
 static void IJK_GLES2_Renderer_TexCoords_cropRight(IJK_GLES2_Renderer *renderer, GLfloat cropRight)
@@ -354,7 +478,7 @@ GLboolean IJK_GLES2_Renderer_use(IJK_GLES2_Renderer *renderer)
     IJK_GLES2_loadOrtho(&modelViewProj, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f);
     glUniformMatrix4fv(renderer->um4_mvp, 1, GL_FALSE, modelViewProj.m);                    IJK_GLES2_checkError_TRACE("glUniformMatrix4fv(um4_mvp)");
 
-    IJK_GLES2_Renderer_TexCoords_reset(renderer);
+    IJK_GLES2_Renderer_TexCoords_reset(renderer, false);
     IJK_GLES2_Renderer_TexCoords_reloadVertex(renderer);
 
     IJK_GLES2_Renderer_Vertices_reset(renderer);
@@ -368,8 +492,34 @@ GLboolean IJK_GLES2_Renderer_use(IJK_GLES2_Renderer *renderer)
  */
 GLboolean IJK_GLES2_Renderer_renderOverlay(IJK_GLES2_Renderer *renderer, SDL_VoutOverlay *overlay)
 {
-    if (!renderer || !renderer->func_uploadTexture)
+    pthread_mutex_lock(&lock);
+    if (activeEffect &&
+        !renderer->frame_buffers[0] &&
+        renderer->frame_width > 0 &&
+        renderer->frame_height > 0) {
+        
+        IJK_GLES2_Renderer_InitResultTexture(renderer);
+
+        //呼叫傳遞進來的onCreated方法及onSizeChanged方法
+        renderer->func_onCreated();
+        renderer->func_onSizeChanged(renderer->frame_width, renderer->frame_height);
+        ALOGE("create frame_buffers and textures %dx%d", renderer->frame_width, renderer->frame_height);
+    }
+    
+    // 使用者設定了Filter，就掛載frameBuffer，否則就按照原來的流程直接渲染到螢幕上
+    GLint bindFrameBuffer = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &bindFrameBuffer);
+    if (activeEffect && renderer->frame_buffers[0]) {
+        glBindFramebuffer(GL_FRAMEBUFFER, renderer->frame_buffers[0]);
+        
+        /* 這句一定要加上，否則無法增加了Filter之後，啟用了其他GLProgram，無法渲染原始視訊到Texture上去了 */
+        IJK_GLES2_Renderer_use(renderer);
+    }
+    
+    if (!renderer || !renderer->func_uploadTexture) {
+        pthread_mutex_unlock(&lock);
         return GL_FALSE;
+    }
 
     glClear(GL_COLOR_BUFFER_BIT);               IJK_GLES2_checkError_TRACE("glClear");
 
@@ -382,6 +532,10 @@ GLboolean IJK_GLES2_Renderer_renderOverlay(IJK_GLES2_Renderer *renderer, SDL_Vou
             renderer->frame_height  != visible_height   ||
             renderer->frame_sar_num != overlay->sar_num ||
             renderer->frame_sar_den != overlay->sar_den) {
+            
+            if (activeEffect) {
+                IJK_GLES2_Renderer_ReleaseResultTexture(renderer);
+            }
 
             renderer->frame_width   = visible_width;
             renderer->frame_height  = visible_height;
@@ -389,6 +543,22 @@ GLboolean IJK_GLES2_Renderer_renderOverlay(IJK_GLES2_Renderer *renderer, SDL_Vou
             renderer->frame_sar_den = overlay->sar_den;
 
             renderer->vertices_changed = 1;
+            
+            if (activeEffect) {
+                IJK_GLES2_Renderer_InitResultTexture(renderer);
+                renderer->func_onSizeChanged(renderer->frame_width,renderer->frame_height);
+                
+                ALOGE("create frame_buffers and textures %dx%d", renderer->frame_width, renderer->frame_height);
+                /* 這句一定要加上，否則無法增加了Filter之後，啟用了其他GLProgram，無法渲染原始視訊到Texture上去了 */
+                IJK_GLES2_Renderer_use(renderer);
+                
+                glBindFramebuffer(GL_FRAMEBUFFER, renderer->frame_buffers[0]);
+            }
+        }
+        
+        if (activeEffect) {
+            glGetIntegerv(GL_VIEWPORT, &renderer->previousViewport);
+            glViewport(0, 0, renderer->frame_width, renderer->frame_height);
         }
 
         renderer->last_buffer_width = renderer->func_getBufferWidth(renderer, overlay);
@@ -398,6 +568,12 @@ GLboolean IJK_GLES2_Renderer_renderOverlay(IJK_GLES2_Renderer *renderer, SDL_Vou
     } else {
         // NULL overlay means force reload vertice
         renderer->vertices_changed = 1;
+    }
+    
+    if (renderer->vertices_changed || activeEffect) {
+        renderer->vertices_changed = 0;
+        IJK_GLES2_Renderer_Vertices_apply(renderer);
+        IJK_GLES2_Renderer_Vertices_reloadVertex(renderer);
     }
 
     GLsizei buffer_width = renderer->last_buffer_width;
@@ -418,12 +594,39 @@ GLboolean IJK_GLES2_Renderer_renderOverlay(IJK_GLES2_Renderer *renderer, SDL_Vou
         GLsizei padding_pixels     = buffer_width - visible_width;
         GLfloat padding_normalized = ((GLfloat)padding_pixels) / buffer_width;
 
-        IJK_GLES2_Renderer_TexCoords_reset(renderer);
+        IJK_GLES2_Renderer_TexCoords_reset(renderer, false);
         IJK_GLES2_Renderer_TexCoords_cropRight(renderer, padding_normalized);
         IJK_GLES2_Renderer_TexCoords_reloadVertex(renderer);
     }
 
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);      IJK_GLES2_checkError_TRACE("glDrawArrays");
+    
+    // 使用者設定了Filter，就取消掛載FrameBuffer,並呼叫Filter的onDrawFrame方法。
+    if (activeEffect && renderer->frame_buffers[0]) {
+        glBindFramebuffer(GL_FRAMEBUFFER, bindFrameBuffer);
+        glUniform1f(renderer->rgbTextureLocation, 1.0);
+        glUniform1i(renderer->us2_sampler[2], 2);
+        IJK_GLES2_Renderer_TexCoords_reset(renderer, true);
+        IJK_GLES2_Renderer_TexCoords_reloadVertex(renderer);
+        renderer->func_onDrawFrame(renderer->cvBuffer);
+    }
+    
+    pthread_mutex_unlock(&lock);
 
     return GL_TRUE;
+}
+
+void IJK_GLES2_Renderer_drawEffect(IJK_GLES2_Renderer *renderer, GLuint textureId) {
+    IJK_GLES2_Renderer_use(renderer);
+    glViewport(renderer->previousViewport[0], renderer->previousViewport[1], renderer->previousViewport[2], renderer->previousViewport[3]);
+    glActiveTexture(GL_TEXTURE0 + 2);
+    glBindTexture(GL_TEXTURE_2D, textureId);
+    
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);      IJK_GLES2_checkError_TRACE("glDrawArrays");
+}
+
+void IJK_GLES2_Renderer_activeEffect(bool active) {
+    pthread_mutex_lock(&lock);
+    activeEffect = active;
+    pthread_mutex_unlock(&lock);
 }

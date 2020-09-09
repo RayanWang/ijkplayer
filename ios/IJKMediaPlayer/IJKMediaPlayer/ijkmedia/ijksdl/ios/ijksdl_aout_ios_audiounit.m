@@ -67,6 +67,19 @@ static void aout_pause_audio(SDL_Aout *aout, int pause_on)
     }
 }
 
+static void aout_mute_audio(SDL_Aout *aout, int mute_on)
+{
+    SDLTRACE("aout_mute_audio(%d)\n", mute_on);
+    SDL_Aout_Opaque *opaque = aout->opaque;
+    opaque->aoutController.mute = mute_on ? YES : NO;
+}
+
+static int aout_get_mute(SDL_Aout *aout) {
+    SDLTRACE("aout_get_mute\n");
+    SDL_Aout_Opaque *opaque = aout->opaque;
+    return opaque->aoutController.mute ? 1 : 0;
+}
+
 static void aout_flush_audio(SDL_Aout *aout)
 {
     SDLTRACE("aout_flush_audio()\n");
@@ -137,6 +150,8 @@ SDL_Aout *SDL_AoutIos_CreateForAudioUnit()
     aout->free_l = aout_free_l;
     aout->open_audio  = aout_open_audio;
     aout->pause_audio = aout_pause_audio;
+    aout->mute_audio = aout_mute_audio;
+    aout->get_mute = aout_get_mute;
     aout->flush_audio = aout_flush_audio;
     aout->close_audio = aout_close_audio;
 

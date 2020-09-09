@@ -29,6 +29,8 @@
 #include "ijksdl/ijksdl_gles2.h"
 #include "ijksdl/ijksdl_vout.h"
 
+#include <CoreVideo/CoreVideo.h>
+
 #define IJK_GLES_STRINGIZE(x)   #x
 #define IJK_GLES_STRINGIZE2(x)  IJK_GLES_STRINGIZE(x)
 #define IJK_GLES_STRING(x)      IJK_GLES_STRINGIZE2(x)
@@ -56,6 +58,19 @@ typedef struct IJK_GLES2_Renderer
     GLsizei   (*func_getBufferWidth)(IJK_GLES2_Renderer *renderer, SDL_VoutOverlay *overlay);
     GLboolean (*func_uploadTexture)(IJK_GLES2_Renderer *renderer, SDL_VoutOverlay *overlay);
     GLvoid    (*func_destroy)(IJK_GLES2_Renderer *renderer);
+    
+    //++Rayan
+    GLint previousViewport[4];
+    GLuint rgbTextureLocation;
+    CVOpenGLESTextureCacheRef cvTextureCache;
+    GLuint frame_buffers[1];
+    GLuint frame_textures[1];
+    CVOpenGLESTextureRef cvTexture;
+    CVPixelBufferRef cvBuffer;
+    void (*func_onCreated)(void);
+    void (*func_onSizeChanged)(int width, int height);
+    void (*func_onDrawFrame)(CVPixelBufferRef cvBuffer);
+    //++
 
     GLsizei buffer_width;
     GLsizei visible_width;

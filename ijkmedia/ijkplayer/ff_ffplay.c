@@ -1412,8 +1412,10 @@ retry:
         }
 display:
         /* display picture */
-        if (!ffp->display_disable && is->force_refresh && is->show_mode == SHOW_MODE_VIDEO && is->pictq.rindex_shown)
+        if (!ffp->display_disable && is->force_refresh && is->show_mode == SHOW_MODE_VIDEO && is->pictq.rindex_shown) {
             video_display2(ffp);
+            is->frame_display++;
+        }
     }
     is->force_refresh = 0;
     if (ffp->show_status) {
@@ -4450,6 +4452,15 @@ long ffp_get_current_position_l(FFPlayer *ffp)
 
     int64_t adjust_pos = pos - start_diff;
     return (long)adjust_pos;
+}
+
+int64_t ffp_get_buffer_tell(FFPlayer *ffp)
+{
+    assert(ffp);
+    VideoState *is = ffp->is;
+    if (!is || !is->ic || !is->ic->pb)
+        return 0;
+    return avio_tell(is->ic->pb);
 }
 
 long ffp_get_duration_l(FFPlayer *ffp)

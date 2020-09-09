@@ -36,4 +36,8 @@
 - (UIImage*) snapshot;
 - (void)setShouldLockWhileBeingMovedToWindow:(BOOL)shouldLockWhiteBeingMovedToWindow __attribute__((deprecated("unused")));
 
+- (EAGLContext*)getEAGLContext;
+- (void)drawEffect:(GLuint)textureId;
+- (void)enableEffect:(bool)enable;
+
 @end

@@ -201,6 +201,12 @@ int             ijkmp_prepare_async(IjkMediaPlayer *mp);
 int             ijkmp_start(IjkMediaPlayer *mp);
 int             ijkmp_pause(IjkMediaPlayer *mp);
 int             ijkmp_stop(IjkMediaPlayer *mp);
+int             ijkmp_dropped_frame(IjkMediaPlayer *mp);
+int             ijkmp_displayed_frame(IjkMediaPlayer *mp);
+void            ijkmp_set_mute(IjkMediaPlayer *mp, int mute);
+int             ijkmp_get_mute(IjkMediaPlayer *mp);
+int             ijkmp_getVideoWidth(IjkMediaPlayer *mp);
+int             ijkmp_getVideoHeight(IjkMediaPlayer *mp);
 int             ijkmp_seek_to(IjkMediaPlayer *mp, long msec);
 int             ijkmp_get_state(IjkMediaPlayer *mp);
 bool            ijkmp_is_playing(IjkMediaPlayer *mp);
@@ -213,9 +219,16 @@ int             ijkmp_get_loop(IjkMediaPlayer *mp);
 void           *ijkmp_get_weak_thiz(IjkMediaPlayer *mp);
 void           *ijkmp_set_weak_thiz(IjkMediaPlayer *mp, void *weak_thiz);
 
+int64_t         ijkmp_get_buffer_tell(IjkMediaPlayer *mp);
+void            ijkmp_setupEffect(IjkMediaPlayer *mp, void *cbOnCreated, void *cbOnSizeChanged, void *cbOnDrawFrame);
+
 /* return < 0 if aborted, 0 if no packet and > 0 if packet.  */
 /* need to call msg_free_res for freeing the resouce obtained in msg */
 int             ijkmp_get_msg(IjkMediaPlayer *mp, AVMessage *msg, int block);
 void            ijkmp_set_frame_at_time(IjkMediaPlayer *mp, const char *path, int64_t start_time, int64_t end_time, int num, int definition);
+
+void lnAIOnCreated();
+void lnAIOnSizeChanged(int w, int h);
+void lnAIOnDrawFrame(CVPixelBufferRef cvBuffer, GLint frameBuffer);
 
 #endif
